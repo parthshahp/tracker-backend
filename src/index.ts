@@ -335,6 +335,25 @@ app.post(
   },
 );
 
+app.delete("/api/time-entries/:id", async (c) => {
+  const db = getDb(c.env);
+  const userId = await getUserId();
+  const id = c.req.param("id");
+
+  if (!id) {
+    return c.json({ error: "Missing time entry id" }, 400);
+  }
+
+  await db
+    .update(schema.timeEntry)
+    .set({ deleted: 1, updatedAt: nowIso() })
+    .where(
+      and(eq(schema.timeEntry.id, id), eq(schema.timeEntry.userId, userId)),
+    );
+
+  return c.body(null, 204);
+});
+
 app.get("/api/timers/active", async (c) => {
   const db = getDb(c.env);
   const userId = await getUserId();
