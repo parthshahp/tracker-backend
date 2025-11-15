@@ -1,0 +1,26 @@
+{
+  "name": "tracker-backend",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "db:generate": "drizzle-kit generate",
+    "db:apply": "wrangler d1 migrations apply time_tracker_db",
+    "db:apply-local": "wrangler d1 migrations apply time_tracker_db --local"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.7.4",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.44.7",
+    "hono": "^4.10.5",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251113.0",
+    "@types/node": "^24.10.1",
+    "drizzle-kit": "^0.31.7",
+    "tsx": "^4.20.6",
+    "wrangler": "^4.4.0"
+  }
+}
