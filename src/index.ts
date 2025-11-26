@@ -19,7 +19,7 @@ app.use("/api/*", cors());
 
 const isoDateSchema = z.iso.datetime({ offset: true });
 const optionalNoteSchema = z.string().max(500).nullable().optional();
-const tagIdsSchema = z.array(z.string().min(1)).max(20).optional();
+const tagIdsSchema = z.array(z.string().min(0)).max(20).optional();
 
 const tagBodySchema = z.object({
   name: z.string().min(1),
@@ -44,10 +44,13 @@ const timeEntriesQuerySchema = z
 
 const createTimeEntrySchema = z
   .object({
+    id: z.string().optional(),
     startAt: isoDateSchema,
-    endAt: isoDateSchema.optional(),
+    endAt: isoDateSchema.optional().nullable(),
     note: optionalNoteSchema,
     tagIds: tagIdsSchema,
+    createdAt: isoDateSchema.optional(),
+    updatedAt: isoDateSchema.optional(),
   })
   .refine(
     (values) => {
@@ -313,7 +316,7 @@ app.post(
       );
     }
 
-    const id = crypto.randomUUID();
+    const id = body.id ?? crypto.randomUUID();
     const timestamp = nowIso();
 
     await db.insert(schema.timeEntry).values({
@@ -322,10 +325,54 @@ app.post(
       startAt: body.startAt,
       endAt: body.endAt ?? null,
       note: body.note ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt: body.createdAt ?? timestamp,
+      updatedAt: body.updatedAt ?? timestamp,
       deleted: 0,
     });
+
+    await syncTimeEntryTags(db, id, tagValidation.tagIds);
+
+    const entry = await getTimeEntryWithTags(db, id);
+
+    return c.json(entry, 201);
+  },
+);
+
+app.patch(
+  "/api/time-entries/:id",
+  zValidator("json", createTimeEntrySchema),
+  async (c) => {
+    const db = getDb(c.env);
+    const userId = await getUserId();
+    const body = c.req.valid("json");
+    const id = c.req.param("id");
+
+    if (!id || body.id != id) {
+      return c.json({ error: "Missing time entry id" }, 400);
+    }
+
+    const tagValidation = await validateTagIds(db, userId, body.tagIds);
+    if (!tagValidation.ok) {
+      return c.json(
+        { error: `Invalid tag ids: ${tagValidation.missing.join(", ")}` },
+        400,
+      );
+    }
+
+    const timestamp = nowIso();
+
+    await db
+      .update(schema.timeEntry)
+      .set({
+        startAt: body.startAt,
+        endAt: body.endAt ?? null,
+        note: body.note ?? null,
+        createdAt: body.createdAt ?? timestamp,
+        updatedAt: body.updatedAt ?? timestamp,
+      })
+      .where(
+        and(eq(schema.timeEntry.id, id), eq(schema.timeEntry.userId, userId)),
+      );
 
     await syncTimeEntryTags(db, id, tagValidation.tagIds);
 
