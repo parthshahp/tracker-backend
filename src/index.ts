@@ -22,6 +22,7 @@ const optionalNoteSchema = z.string().max(500).nullable().optional();
 const tagIdsSchema = z.array(z.string().min(0)).max(20).optional();
 
 const tagBodySchema = z.object({
+  id: z.string().min(1).optional(),
   name: z.string().min(1),
   color: z.string().optional(),
 });
@@ -44,7 +45,7 @@ const timeEntriesQuerySchema = z
 
 const createTimeEntrySchema = z
   .object({
-    id: z.string().optional(),
+    id: z.string().min(1).optional(),
     startAt: isoDateSchema,
     endAt: isoDateSchema.optional().nullable(),
     note: optionalNoteSchema,
@@ -255,7 +256,7 @@ app.post("/api/tags", zValidator("json", tagBodySchema), async (c) => {
   const body = c.req.valid("json");
 
   const timestamp = nowIso();
-  const id = crypto.randomUUID();
+  const id = body.id ?? crypto.randomUUID();
 
   await db.insert(schema.tag).values({
     id,
@@ -412,162 +413,6 @@ app.get("/api/timers/active", async (c) => {
 
   const [withTags] = await attachTagsToEntries(db, [activeEntry]);
   return c.json(withTags);
-});
-
-app.post(
-  "/api/timers/start",
-  zValidator("json", timerStartSchema),
-  async (c) => {
-    const db = getDb(c.env);
-    const userId = await getUserId();
-    const body = c.req.valid("json");
-
-    const existing = await getActiveTimeEntry(db, userId);
-    if (existing) {
-      return c.json(
-        {
-          error:
-            "An active timer is already running. Stop it before starting a new one.",
-        },
-        409,
-      );
-    }
-
-    const tagValidation = await validateTagIds(db, userId, body.tagIds);
-    if (!tagValidation.ok) {
-      return c.json(
-        { error: `Invalid tag ids: ${tagValidation.missing.join(", ")}` },
-        400,
-      );
-    }
-
-    const id = crypto.randomUUID();
-    const timestamp = nowIso();
-    const startAt = body.startAt ?? timestamp;
-
-    await db.insert(schema.timeEntry).values({
-      id,
-      userId,
-      startAt,
-      endAt: null,
-      note: body.note ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      deleted: 0,
-    });
-
-    await syncTimeEntryTags(db, id, tagValidation.tagIds);
-
-    const entry = await getTimeEntryWithTags(db, id);
-    return c.json(entry, 201);
-  },
-);
-
-app.post("/api/timers/stop", zValidator("json", timerStopSchema), async (c) => {
-  const db = getDb(c.env);
-  const userId = await getUserId();
-  const body = c.req.valid("json");
-
-  const activeEntry = await getActiveTimeEntry(db, userId);
-  if (!activeEntry) {
-    return c.json({ error: "No active timer to stop." }, 409);
-  }
-
-  const stopAt = body.endAt ?? nowIso();
-  if (new Date(stopAt).getTime() < new Date(activeEntry.startAt).getTime()) {
-    return c.json({ error: "endAt cannot be before startAt." }, 400);
-  }
-
-  const tagValidation = await validateTagIds(db, userId, body.tagIds);
-  if (!tagValidation.ok) {
-    return c.json(
-      { error: `Invalid tag ids: ${tagValidation.missing.join(", ")}` },
-      400,
-    );
-  }
-
-  const timestamp = nowIso();
-  const updates: Partial<typeof schema.timeEntry.$inferInsert> = {
-    endAt: stopAt,
-    updatedAt: timestamp,
-  };
-
-  if (body.note !== undefined) {
-    updates.note = body.note;
-  }
-
-  await db
-    .update(schema.timeEntry)
-    .set(updates)
-    .where(eq(schema.timeEntry.id, activeEntry.id));
-
-  await syncTimeEntryTags(db, activeEntry.id, tagValidation.tagIds);
-
-  const entry = await getTimeEntryWithTags(db, activeEntry.id);
-  return c.json(entry);
-});
-
-app.patch(
-  "/api/timers/active",
-  zValidator("json", timerPatchSchema),
-  async (c) => {
-    const db = getDb(c.env);
-    const userId = await getUserId();
-    const body = c.req.valid("json");
-
-    const activeEntry = await getActiveTimeEntry(db, userId);
-    if (!activeEntry) {
-      return c.json({ error: "No active timer to update." }, 409);
-    }
-
-    const tagValidation = await validateTagIds(db, userId, body.tagIds);
-    if (!tagValidation.ok) {
-      return c.json(
-        { error: `Invalid tag ids: ${tagValidation.missing.join(", ")}` },
-        400,
-      );
-    }
-
-    const updates: Partial<typeof schema.timeEntry.$inferInsert> = {
-      updatedAt: nowIso(),
-    };
-
-    if (body.startAt) {
-      updates.startAt = body.startAt;
-    }
-
-    if (body.note !== undefined) {
-      updates.note = body.note;
-    }
-
-    await db
-      .update(schema.timeEntry)
-      .set(updates)
-      .where(eq(schema.timeEntry.id, activeEntry.id));
-
-    await syncTimeEntryTags(db, activeEntry.id, tagValidation.tagIds);
-
-    const entry = await getTimeEntryWithTags(db, activeEntry.id);
-    return c.json(entry);
-  },
-);
-
-app.post("/api/timers/cancel", async (c) => {
-  const db = getDb(c.env);
-  const userId = await getUserId();
-  const activeEntry = await getActiveTimeEntry(db, userId);
-
-  if (!activeEntry) {
-    return c.json({ error: "No active timer to cancel." }, 409);
-  }
-
-  await db
-    .update(schema.timeEntry)
-    .set({ deleted: 1, updatedAt: nowIso() })
-    .where(eq(schema.timeEntry.id, activeEntry.id));
-
-  const entry = await getTimeEntryWithTags(db, activeEntry.id);
-  return c.json(entry);
 });
 
 export default app;
